@@ -1,0 +1,995 @@
+// --- 1. Global Variables & Initialization ---
+let CANVAS_SIZE = 0;
+const canvas = document.getElementById('outputCanvas');
+const ctx = canvas.getContext('2d');
+const transformationsList = document.getElementById('transformationsList');
+const canvasContainer = document.getElementById('canvas-container');
+const playPauseBtn = document.getElementById('playPauseBtn');
+const canvasModeToggleBtn = document.getElementById('canvasModeToggleBtn');
+const bnwToggleBtn = document.getElementById('bnwToggleBtn');
+const toggleRectsBtn = document.getElementById('toggleRectsBtn');
+const resetSettingsBtn = document.getElementById('resetSettingsBtn');
+const fileInput = document.getElementById('fileInput'); // File input element
+
+let transformationRects = [];
+let activeRectIndex = -1;
+let intervalId = null;
+let isCanvasLightMode = false;
+let isBNWTransformMode = false;
+let showTransforms = true;
+
+// Persistent state for the last calculated point
+let currentIFS_X = 0;
+let currentIFS_Y = 0;
+
+let dragMode = null;
+let dragStartX, dragStartY;
+let initialRectState;
+
+const LOCAL_STORAGE_KEY = 'ifsAttractorSettings';
+
+// COLOR CONSTANTS
+const ACCENT_RED = '#9a2b17';
+const WHITE_COLOR = '#fff';
+
+const IFS_PRESETS = {
+    barnsley: [
+        { x: 295, y: 504, width: 10, height: 96, rotation: 0.0, p: 0.01, color: '#32CD32' },
+        { x: 45, y: 285, width: 510, height: 510, rotation: 0.03, p: 0.85, color: '#228B22' },
+        { x: 200, y: 200, width: 150, height: 150, rotation: 0.85, p: 0.07, color: '#3CB371' },
+        { x: 250, y: 350, width: 150, height: 150, rotation: -0.85, p: 0.07, color: '#00FA9A' }
+    ],
+    sierpinski: [
+        { x: 0, y: 0, width: 300, height: 300, rotation: 0, p: 0.333, color: '#FFD700' },
+        { x: 300, y: 0, width: 300, height: 300, rotation: 0, p: 0.333, color: '#1E90FF' },
+        { x: 150, y: 300, width: 300, height: 300, rotation: 0, p: 0.334, color: '#FF4500' }
+    ],
+    koch: [
+        { x: 0, y: 400, width: 200, height: 200, rotation: 0, p: 0.25, color: '#e0b0ff' },
+        { x: 200, y: 400, width: 200, height: 200, rotation: Math.PI / 3, p: 0.25, color: '#dda0dd' },
+        { x: 300, y: 227, width: 200, height: 200, rotation: -Math.PI / 3, p: 0.25, color: '#ffb6c1' },
+        { x: 400, y: 400, width: 200, height: 200, rotation: 0, p: 0.25, color: '#ffc0cb' }
+    ],
+    cantor: [
+        { x: 0, y: 200, width: 200, height: 100, rotation: 0, p: 0.5, color: '#FFFFFF' },
+        { x: 400, y: 200, width: 200, height: 100, rotation: 0, p: 0.5, color: '#FFFFFF' }
+    ],
+    dragon: [
+        { x: 100, y: 200, width: 400, height: 400, rotation: -Math.PI / 4, p: 0.5, color: '#4682B4' },
+        { x: 200, y: 100, width: 400, height: 400, rotation: 3 * Math.PI / 4, p: 0.5, color: '#87CEFA' }
+    ],
+    tree: [
+        { x: 290, y: 480, width: 20, height: 120, rotation: 0, p: 0.05, color: '#8B4513' },
+        { x: 180, y: 280, width: 240, height: 240, rotation: -0.4, p: 0.4, color: '#228B22' },
+        { x: 180, y: 280, width: 240, height: 240, rotation: 0.4, p: 0.4, color: '#32CD32' },
+        { x: 250, y: 150, width: 100, height: 100, rotation: 0, p: 0.15, color: '#006400' }
+    ],
+    spiral: [
+        { x: 30, y: 30, width: 540, height: 540, rotation: 0.15, p: 0.92, color: '#FF6347' },
+        { x: 250, y: 250, width: 100, height: 100, rotation: 0, p: 0.08, color: '#FFD700' }
+    ],
+    crystal: [
+        { x: 100, y: 100, width: 400, height: 400, rotation: 0, p: 0.25, color: '#00CED1' },
+        { x: 100, y: 100, width: 400, height: 400, rotation: Math.PI / 2, p: 0.25, color: '#20B2AA' },
+        { x: 100, y: 100, width: 400, height: 400, rotation: Math.PI, p: 0.25, color: '#48D1CC' },
+        { x: 100, y: 100, width: 400, height: 400, rotation: -Math.PI / 2, p: 0.25, color: '#40E0D0' }
+    ]
+};
+
+
+// --- 2. Core Fractal Functions ---
+
+function getAffineMatrixFromRect(rect) {
+    const scaleX = rect.width / CANVAS_SIZE;
+    const scaleY = rect.height / CANVAS_SIZE;
+    const cosRot = Math.cos(rect.rotation);
+    const sinRot = Math.sin(rect.rotation);
+
+    const A = scaleX * cosRot;
+    const B = -scaleY * sinRot;
+    const C = scaleX * sinRot;
+    const D = scaleY * cosRot;
+
+    const rectCenterX = rect.x + rect.width / 2;
+    const rectCenterY = rect.y + rect.height / 2;
+
+    const normRectCenterX = (rectCenterX - CANVAS_SIZE / 2) / (CANVAS_SIZE / 4);
+    const normRectCenterY = (rectCenterY - CANVAS_SIZE / 2) / (CANVAS_SIZE / 4);
+
+    const E = normRectCenterX;
+    const F = normRectCenterY;
+
+    return { a: A, b: B, c: C, d: D, e: E, f: F };
+}
+
+function applyIFSMapping(transform, x, y) {
+    const { a, b, c, d, e, f } = transform;
+    return {
+        x: a * x + b * y + e,
+        y: c * x + d * y + f
+    };
+}
+
+/**
+ * Runs a batch of IFS iterations starting from a given point.
+ * @param {number} numPoints The number of points to generate.
+ * @param {number} startX The x-coordinate to start from.
+ * @param {number} startY The y-coordinate to start from.
+ * @param {boolean} isInitialRun Whether this is the first run, requiring burn-in.
+ * @returns {{points: Array, finalX: number, finalY: number}} The generated points and the final point.
+ */
+function runIFSBatch(numPoints, startX, startY, isInitialRun) {
+    let currentX = startX;
+    let currentY = startY;
+    const newPoints = [];
+
+    if (transformationRects.length === 0) return { points: [], finalX: startX, finalY: startY };
+
+    // Read burn-in value from input field. If not initial run, burn-in is 0.
+    const burnIn = isInitialRun ? parseInt(document.getElementById('burnInPointsInput').value) : 0;
+    const totalIterations = numPoints + burnIn;
+
+
+    // Determine attractor color override
+    const bnwAttractorColor = isBNWTransformMode ? (isCanvasLightMode ? ACCENT_RED : WHITE_COLOR) : null;
+
+    const mappings = transformationRects.map(rect => ({
+        matrix: getAffineMatrixFromRect(rect),
+        p: rect.p,
+        color: rect.color
+    }));
+
+    let totalProb = mappings.reduce((sum, m) => sum + m.p, 0);
+    if (totalProb === 0) return { points: [], finalX: startX, finalY: startY };
+
+    const cumulativeProbs = [];
+    let currentSum = 0;
+    for (let m of mappings) {
+        currentSum += m.p / totalProb;
+        cumulativeProbs.push(currentSum);
+    }
+
+    for (let i = 0; i < totalIterations; i++) {
+        const r = Math.random();
+        let selectedMapping = null;
+        for (let j = 0; j < mappings.length; j++) {
+            if (r < cumulativeProbs[j]) {
+                selectedMapping = mappings[j];
+                break;
+            }
+        }
+        if (!selectedMapping) selectedMapping = mappings[0];
+
+        const nextPoint = applyIFSMapping(selectedMapping.matrix, currentX, currentY);
+        currentX = nextPoint.x;
+        currentY = nextPoint.y;
+
+        // Only push points after burn-in
+        if (i >= burnIn) {
+            const pointColor = bnwAttractorColor || selectedMapping.color;
+            newPoints.push({ x: currentX, y: currentY, color: pointColor });
+        }
+    }
+    return { points: newPoints, finalX: currentX, finalY: currentY };
+}
+
+function mapToCanvas(coord) {
+    const scale = CANVAS_SIZE / 4;
+    const offset = CANVAS_SIZE / 2;
+    return coord * scale + offset;
+}
+
+function drawPoints(newPoints, alpha) {
+    ctx.globalAlpha = alpha;
+    newPoints.forEach(point => {
+        const px = mapToCanvas(point.x);
+        const py = mapToCanvas(point.y);
+        ctx.fillStyle = point.color;
+        ctx.fillRect(px, py, 1, 1);
+    });
+    ctx.globalAlpha = 1.0;
+}
+
+// --- 3. UI and Control Functions (Local Storage Integration) ---
+
+// MODIFIED: No longer clears canvas, uses/updates persistent state.
+function runSingleIteration() {
+    if (transformationRects.length === 0) return;
+    stopAutoIterate(); // Ensure auto-iterate is off
+
+    const numIter = parseInt(document.getElementById('numIterations').value);
+    const alpha = parseFloat(document.getElementById('alphaValue').value);
+
+    const isInitialRun = currentIFS_X === 0 && currentIFS_Y === 0;
+
+    // Run the batch using the persistent starting point
+    const result = runIFSBatch(numIter, currentIFS_X, currentIFS_Y, isInitialRun);
+
+    // Draw the new points cumulatively
+    drawPoints(result.points, alpha);
+
+    // Update the persistent state for the next run
+    currentIFS_X = result.finalX;
+    currentIFS_Y = result.finalY;
+
+    document.getElementById('iterateBtn').setAttribute('data-ran-once', 'true');
+}
+
+function saveSettings() {
+    const scaleFactor = 600 / CANVAS_SIZE;
+    const scaledRects = transformationRects.map(rect => ({
+        ...rect,
+        x: rect.x * scaleFactor,
+        y: rect.y * scaleFactor,
+        width: rect.width * scaleFactor,
+        height: rect.height * scaleFactor
+    }));
+
+    const settings = {
+        numIterations: document.getElementById('numIterations').value,
+        alphaValue: document.getElementById('alphaValue').value,
+        burnInPoints: document.getElementById('burnInPointsInput').value,
+        isCanvasLightMode: isCanvasLightMode,
+        isBNWTransformMode: isBNWTransformMode,
+        showTransforms: showTransforms,
+        transformationRects: scaledRects
+        // NOTE: currentIFS_X/Y are not saved, as the fractal state is regenerated on load.
+    };
+    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(settings));
+}
+
+function loadSettings() {
+    const savedSettings = localStorage.getItem(LOCAL_STORAGE_KEY);
+    const initialScaleFactor = CANVAS_SIZE / 600;
+
+    if (savedSettings) {
+        const settings = JSON.parse(savedSettings);
+
+        // 1. Load Iteration Parameters
+        document.getElementById('numIterations').value = settings.numIterations;
+        document.getElementById('alphaValue').value = settings.alphaValue;
+        document.getElementById('burnInPointsInput').value = settings.burnInPoints || '20';
+
+        // 2. Load Visual Modes
+        isCanvasLightMode = settings.isCanvasLightMode;
+        document.body.classList.toggle('light-canvas-mode', isCanvasLightMode);
+        canvasModeToggleBtn.innerHTML = isCanvasLightMode
+            ? '<span class="material-icons-round">dark_mode</span>Dark Canvas'
+            : '<span class="material-icons-round">light_mode</span>Light Canvas';
+
+        isBNWTransformMode = settings.isBNWTransformMode || false;
+        bnwToggleBtn.innerHTML = isBNWTransformMode
+            ? '<span class="material-icons-round">palette</span>Colored IFS'
+            : '<span class="material-icons-round">invert_colors</span>B&W IFS';
+
+        showTransforms = settings.showTransforms !== undefined ? settings.showTransforms : true;
+        toggleRectsBtn.innerHTML = showTransforms
+            ? '<span class="material-icons-round">visibility_off</span>Hide IFS'
+            : '<span class="material-icons-round">visibility</span>Show IFS';
+
+
+        // 3. Load Transformations
+        transformationRects = settings.transformationRects.map(rect => {
+            return {
+                ...rect,
+                x: rect.x * initialScaleFactor,
+                y: rect.y * initialScaleFactor,
+                width: rect.width * initialScaleFactor,
+                height: rect.height * initialScaleFactor,
+                rotation: rect.rotation,
+                p: rect.p,
+                color: rect.color
+            };
+        });
+    } else {
+        // --- NEW DEFAULTS FOR FIRST TIME OPENING ---
+        isCanvasLightMode = true; // Default to Light Canvas Mode
+        document.body.classList.add('light-canvas-mode'); // Apply light mode body class
+        isBNWTransformMode = true; // Default to B&W Transform Mode
+        showTransforms = true;
+
+        // Set default N. of iterations value on initial load
+        document.getElementById('burnInPointsInput').value = '20';
+
+        // Update button texts for the new defaults
+        canvasModeToggleBtn.innerHTML = '<span class="material-icons-round">dark_mode</span>Dark Canvas';
+        bnwToggleBtn.innerHTML = '<span class="material-icons-round">palette</span>Colored Transforms';
+        toggleRectsBtn.innerHTML = '<span class="material-icons-round">visibility_off</span>Hide Transforms';
+        // --- END NEW DEFAULTS ---
+
+
+        // Load default Sierpinski Gasket
+        IFS_PRESETS.sierpinski.forEach(rect => {
+            transformationRects.push({
+                x: rect.x * initialScaleFactor,
+                y: rect.y * initialScaleFactor,
+                width: rect.width * initialScaleFactor,
+                height: rect.height * initialScaleFactor,
+                rotation: rect.rotation,
+                p: rect.p,
+                color: rect.color
+            });
+        });
+    }
+
+    resetCanvas(true); // Clear canvas and reset persistent state
+    renderTransformationsUI();
+    setActiveTransform(0);
+
+    // Run an initial step to draw the fractal on load
+    if (transformationRects.length > 0) {
+        runSingleIteration();
+    }
+}
+
+function resetAllSettings() {
+    if (!confirm("Are you sure you want to reset all settings and clear local storage?")) {
+        return;
+    }
+    stopAutoIterate();
+    localStorage.removeItem(LOCAL_STORAGE_KEY);
+    transformationRects = [];
+    activeRectIndex = -1;
+    setCanvasSize();
+    loadSettings();
+    alert("All settings have been reset to default (Sierpinski Gasket).");
+}
+
+function stopAutoIterate() {
+    clearInterval(intervalId);
+    intervalId = null;
+    playPauseBtn.innerHTML = '<span class="material-icons-round">play_circle</span>Auto-Iterate';
+    playPauseBtn.classList.remove('playing');
+}
+
+function startAutoIterate() {
+    if (transformationRects.length === 0) {
+        alert("Add or load a transformation set first.");
+        return;
+    }
+    const numIter = parseInt(document.getElementById('numIterations').value);
+    const alpha = parseFloat(document.getElementById('alphaValue').value);
+
+    // When starting auto-iterate, we implicitly clear the canvas and reset the persistent point
+    resetCanvas(true);
+
+    const iterateStep = () => {
+        const result = runIFSBatch(numIter, currentIFS_X, currentIFS_Y, false); // Not initial run
+        drawPoints(result.points, alpha);
+        currentIFS_X = result.finalX; // Update persistent state
+        currentIFS_Y = result.finalY;
+
+        document.getElementById('iterateBtn').setAttribute('data-ran-once', 'true');
+    };
+
+    // Run once immediately, then start interval
+    iterateStep();
+    intervalId = setInterval(iterateStep, 100);
+    playPauseBtn.innerHTML = '<span class="material-icons-round">pause_circle</span>Pause Auto-Iterate';
+    playPauseBtn.classList.add('playing');
+}
+
+function toggleAutoIterate() {
+    if (intervalId) {
+        stopAutoIterate();
+    } else {
+        startAutoIterate();
+    }
+}
+
+/**
+ * Clears the canvas and optionally resets the persistent IFS point state.
+ * @param {boolean} resetState If true, resets currentIFS_X and Y to (0,0). Defaults to true.
+ */
+function resetCanvas(resetState = true) {
+    ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+    ctx.fillStyle = isCanvasLightMode ? '#fff' : '#000';
+    ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+
+    if (resetState) {
+        currentIFS_X = 0;
+        currentIFS_Y = 0;
+        document.getElementById('iterateBtn').removeAttribute('data-ran-once');
+    }
+}
+
+function updateVisualModes() {
+    // Re-run the fractal drawing if necessary when visual modes change
+    if (intervalId) {
+        stopAutoIterate();
+        startAutoIterate();
+    } else if (document.getElementById('iterateBtn').hasAttribute('data-ran-once')) {
+        // If it ran once, clear and re-run fully to re-draw with new colors
+        resetCanvas(true);
+        runSingleIteration();
+    }
+}
+
+function toggleCanvasTheme() {
+    isCanvasLightMode = !isCanvasLightMode;
+    document.body.classList.toggle('light-canvas-mode', isCanvasLightMode);
+
+    canvasModeToggleBtn.innerHTML = isCanvasLightMode
+        ? '<span class="material-icons-round">dark_mode</span>Dark Canvas'
+        : '<span class="material-icons-round">light_mode</span>Light Canvas';
+
+    resetCanvas(false); // Clear canvas but keep persistent point
+    drawOverlays();
+    updateVisualModes();
+    saveSettings();
+}
+
+// MODIFIED: Added call to renderTransformationsUI() to update P label colors.
+function toggleBNWTransforms() {
+    isBNWTransformMode = !isBNWTransformMode;
+
+    bnwToggleBtn.innerHTML = isBNWTransformMode
+        ? '<span class="material-icons-round">palette</span>Colored IFS'
+        : '<span class="material-icons-round">invert_colors</span>B&W IFS';
+
+    drawOverlays();
+    renderTransformationsUI(); // FIX: Re-render the side panel to update the P label colors
+    updateVisualModes();
+    saveSettings();
+}
+
+function toggleShowTransforms() {
+    showTransforms = !showTransforms;
+    toggleRectsBtn.innerHTML = showTransforms
+        ? '<span class="material-icons-round">visibility_off</span>Hide IFS'
+        : '<span class="material-icons-round">visibility</span>Show IFS';
+
+    drawOverlays();
+    saveSettings();
+}
+
+// NEW: Function to toggle the information section visibility
+function toggleInfo() {
+    const infoContent = document.getElementById('infoContent');
+    const btn = document.getElementById('toggleInfoBtn');
+    const isVisible = infoContent.style.display === 'block';
+
+    infoContent.style.display = isVisible ? 'none' : 'block';
+    btn.style.backgroundColor = isVisible ? '#5b5b5b' : ACCENT_RED;
+    btn.innerHTML = isVisible 
+        ? '<span class="material-icons-round">info</span> How it Works' 
+        : '<span class="material-icons-round">expand_less</span> Hide Info';
+}
+
+// NEW: Function to trigger file download
+function downloadFile(content, fileName, mimeType) {
+    const a = document.createElement('a');
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+// UPDATED: Function to save the IFS configuration as .json
+function saveIFS() {
+    stopAutoIterate();
+    // Scale the coordinates back to 600x600 reference system for portability
+    const scaleFactor = 600 / CANVAS_SIZE;
+    const dataToSave = transformationRects.map(rect => ({
+        x: rect.x * scaleFactor,
+        y: rect.y * scaleFactor,
+        width: rect.width * scaleFactor,
+        height: rect.height * scaleFactor,
+        rotation: rect.rotation,
+        p: rect.p,
+        color: rect.color
+    }));
+    const content = JSON.stringify(dataToSave, null, 2);
+    downloadFile(content, 'ifs_attractor.json', 'application/json');
+}
+
+// UPDATED: Function to handle file selection and loading from .json
+function handleFileSelect(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        try {
+            const loadedData = JSON.parse(e.target.result);
+            if (!Array.isArray(loadedData) || loadedData.some(item => typeof item.x !== 'number')) {
+                throw new Error('Invalid IFS file format.');
+            }
+
+            stopAutoIterate();
+            transformationRects = [];
+            activeRectIndex = -1;
+
+            // Scale the loaded coordinates from 600x600 reference back to current canvas size
+            const scaleFactor = CANVAS_SIZE / 600;
+            loadedData.forEach(rect => {
+                    // Simple validation and application
+                transformationRects.push({
+                    x: rect.x * scaleFactor,
+                    y: rect.y * scaleFactor,
+                    width: rect.width * scaleFactor,
+                    height: rect.height * scaleFactor,
+                    rotation: rect.rotation,
+                    p: rect.p,
+                    color: rect.color
+                });
+            });
+
+            renderTransformationsUI();
+            resetCanvas(true);
+            if (transformationRects.length > 0) {
+                runSingleIteration();
+            }
+            saveSettings(); // Save the new setup to local storage
+            alert(`Loaded ${transformationRects.length} transformations from file.`);
+
+        } catch (error) {
+            console.error("Error loading IFS file:", error);
+            alert("Error loading IFS file. Please ensure it is a valid JSON-formatted IFS .json file.");
+        }
+    };
+    reader.readAsText(file);
+}
+
+
+function setActiveTransform(index) {
+    activeRectIndex = index;
+    renderTransformationsUI();
+}
+
+function updateTransformRect(index, key, value) {
+    const val = (key === 'color') ? value : parseFloat(value);
+    if (isNaN(val) && key !== 'color') return;
+    transformationRects[index][key] = val;
+
+    // When a transform changes, we must reset the IFS state to force a re-calculation
+    if (intervalId) {
+        // NEW: If auto-iterate is running, clear the canvas to avoid trails
+        resetCanvas(false);
+    } else {
+        resetCanvas(true); // Reset canvas and persistent state
+        if (document.getElementById('iterateBtn').hasAttribute('data-ran-once')) {
+            runSingleIteration(); // Re-run a single step
+        }
+    }
+
+    if (key === 'width' || key === 'height') {
+        renderTransformationsUI();
+    } else {
+        drawOverlays();
+        const item = document.querySelector(`.transform-item[data-index="${index}"]`);
+        if (item) {
+            if (item.querySelector(`input[name="${key}"][type="range"]`)) {
+                const span = item.querySelector(`input[name="${key}"]`).closest('.range-label').querySelector('span');
+                if (span) {
+                    span.textContent = key === 'rotation' ? `${(val * 180 / Math.PI).toFixed(1)}°` : `${Math.round(val)}`;
+                }
+            }
+            if (key === 'color') {
+                // Update the color label immediately if not in B&W mode
+                if (!isBNWTransformMode) {
+                    const h4Span = item.querySelector('h4 span');
+                    if (h4Span) h4Span.style.color = val;
+                }
+            }
+            if (key === 'p') {
+                const h4Span = item.querySelector('h4 span');
+                if (h4Span) h4Span.textContent = `(P=${(val).toFixed(3)})`;
+            }
+        }
+    }
+    saveSettings();
+}
+
+function removeTransformRect(index) {
+    transformationRects.splice(index, 1);
+    activeRectIndex = -1;
+    // Clear and re-run on removal
+    stopAutoIterate();
+    resetCanvas(true);
+    if (transformationRects.length > 0) {
+        runSingleIteration();
+    }
+
+    renderTransformationsUI();
+    saveSettings();
+}
+
+function addTransformUI(initialData = null) {
+    const newRect = initialData || {
+        x: CANVAS_SIZE * 0.25, y: CANVAS_SIZE * 0.25, width: CANVAS_SIZE * 0.5, height: CANVAS_SIZE * 0.5, rotation: 0, p: 1 / (transformationRects.length + 1 || 1),
+        color: `hsl(${Math.floor(Math.random() * 360)}, 70%, 60%)`
+    };
+    transformationRects.push(newRect);
+
+    stopAutoIterate();
+    resetCanvas(true);
+    runSingleIteration();
+
+    renderTransformationsUI();
+    setActiveTransform(transformationRects.length - 1);
+    saveSettings();
+}
+
+function renderTransformationsUI() {
+    transformationsList.innerHTML = '';
+    transformationRects.forEach((rect, index) => {
+        const div = document.createElement('div');
+        div.className = 'transform-item';
+        div.dataset.index = index;
+        div.classList.toggle('selected', index === activeRectIndex);
+        div.onclick = (e) => {
+            if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'SELECT' && e.target.tagName !== 'BUTTON' && e.target.closest('button') === null) {
+                setActiveTransform(index);
+            }
+        };
+
+        // The color logic for the P label: colored in color mode, grey in B&W mode.
+        const labelColor = isBNWTransformMode ? 'var(--text-secondary)' : rect.color;
+
+        const maxRangeX = CANVAS_SIZE - 10;
+        const maxRangeY = CANVAS_SIZE - 10;
+        const currentRotDeg = (rect.rotation * 180 / Math.PI).toFixed(1);
+
+        div.innerHTML = `
+            <h4>
+                Map ${index + 1} <span style="color:${labelColor}; font-weight:400;">(P=${(rect.p).toFixed(3)})</span>
+                <button onclick="event.stopPropagation(); removeTransformRect(${index})"
+                        style="background-color: #555; width: 30px; height: 30px; padding: 0; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+                    <span class="material-icons-round" style="font-size:18px; margin: 0;">close</span>
+                </button>
+            </h4>
+            <div class="transform-params">
+                <div class="flex-row">
+                    <label>P (Weight): <input type="number" step="0.01" value="${rect.p}" onchange="updateTransformRect(${index}, 'p', this.value)" style="width: 50px;"></label>
+                </div>
+                <div class="flex-row" style="margin-top: 8px;">
+                    <label>Color: <input type="color" value="${rect.color}" onchange="updateTransformRect(${index}, 'color', this.value)"></label>
+                </div>
+                <div class="flex-row">
+                    <label class="range-label">X: <input type="range" name="x" min="${-CANVAS_SIZE}" max="${maxRangeX}" value="${rect.x}" oninput="updateTransformRect(${index}, 'x', this.value)" style="width: 80px;"> <span>${Math.round(rect.x)}</span></label>
+                    <label class="range-label">Y: <input type="range" name="y" min="${-CANVAS_SIZE}" max="${maxRangeY}" value="${rect.y}" oninput="updateTransformRect(${index}, 'y', this.value)" style="width: 80px;"> <span>${Math.round(rect.y)}</span></label>
+                </div>
+                <div class="flex-row">
+                    <label class="range-label">W: <input type="range" name="width" min="10" max="${CANVAS_SIZE}" value="${rect.width}" oninput="updateTransformRect(${index}, 'width', this.value)" style="width: 80px;"> <span>${Math.round(rect.width)}</span></label>
+                    <label class="range-label">H: <input type="range" name="height" min="10" max="${CANVAS_SIZE}" value="${rect.height}" oninput="updateTransformRect(${index}, 'height', this.value)" style="width: 80px;"> <span>${Math.round(rect.height)}</span></label>
+                </div>
+                <div class="flex-row">
+                    <label class="range-label">Rot: <input type="range" name="rotation" min="-3.141" max="3.141" step="0.001" value="${rect.rotation}" oninput="updateTransformRect(${index}, 'rotation', this.value)" style="width: 80px;"> <span>${currentRotDeg}°</span></label>
+                </div>
+            </div>
+        `;
+        transformationsList.appendChild(div);
+    });
+    drawOverlays();
+}
+
+function setCanvasSize() {
+    stopAutoIterate();
+
+    const containerRect = canvasContainer.getBoundingClientRect();
+    const style = getComputedStyle(canvasContainer);
+    const paddingX = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+    const paddingY = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+
+    const availableWidth = containerRect.width - paddingX;
+    const availableHeight = containerRect.height - paddingY;
+    const size = Math.floor(Math.min(availableWidth, availableHeight));
+
+    const isInitialLoad = CANVAS_SIZE === 0;
+
+    if (canvas.width !== size && CANVAS_SIZE > 0) {
+        const scaleFactor = size / CANVAS_SIZE;
+
+        transformationRects.forEach(rect => {
+            rect.x *= scaleFactor;
+            rect.y *= scaleFactor;
+            rect.width *= scaleFactor;
+            rect.height *= scaleFactor;
+        });
+    }
+
+    CANVAS_SIZE = size;
+    canvas.width = size;
+    canvas.height = size;
+
+    if (!isInitialLoad) {
+        resetCanvas(true);
+    }
+
+    renderTransformationsUI();
+}
+
+function generateRandomIFS(count) {
+    for (let i = 0; i < count; i++) {
+        const randomRect = {
+            x: Math.random() * (CANVAS_SIZE * 0.5) + (CANVAS_SIZE * 0.1),
+            y: Math.random() * (CANVAS_SIZE * 0.5) + (CANVAS_SIZE * 0.1),
+            width: Math.random() * (CANVAS_SIZE * 0.3) + (CANVAS_SIZE * 0.05),
+            height: Math.random() * (CANVAS_SIZE * 0.3) + (CANVAS_SIZE * 0.05),
+            rotation: Math.random() * 2 * Math.PI,
+            p: 1 / count,
+            color: `hsl(${Math.floor(Math.random() * 360)}, 70%, 60%)`
+        };
+        transformationRects.push(randomRect);
+    }
+}
+
+function loadPreset() {
+    const presetKey = document.getElementById('presetSelect').value;
+    if (presetKey === 'none') return;
+
+    stopAutoIterate();
+    transformationRects = [];
+    activeRectIndex = -1;
+
+    const presetData = IFS_PRESETS[presetKey];
+    const scaleFactor = CANVAS_SIZE / 600;
+
+    presetData.forEach(rect => {
+        transformationRects.push({
+            x: rect.x * scaleFactor,
+            y: rect.y * scaleFactor,
+            width: rect.width * scaleFactor,
+            height: rect.height * scaleFactor,
+            rotation: rect.rotation,
+            p: rect.p,
+            color: rect.color
+        });
+    });
+
+    renderTransformationsUI();
+    resetCanvas(true);
+    runSingleIteration(); // Re-run the fractal
+    saveSettings();
+}
+
+// --- 4. Visual Editor (Overlay Logic) ---
+
+function drawOverlays() {
+    document.querySelectorAll('.transform-overlay').forEach(el => el.remove());
+
+    if (!showTransforms) { // CHECK NEW STATE
+        return;
+    }
+
+    const canvasRect = canvas.getBoundingClientRect();
+    const containerRect = canvasContainer.getBoundingClientRect();
+
+    const canvasLeftOffset = canvasRect.left - containerRect.left;
+    const canvasTopOffset = canvasRect.top - containerRect.top;
+
+    transformationRects.forEach((rect, index) => {
+
+        // DYNAMIC COLOR CALCULATION
+        const currentTransformColor = (function () {
+            if (!isBNWTransformMode) {
+                return rect.color;
+            }
+            if (isCanvasLightMode) {
+                return ACCENT_RED;
+            }
+            return WHITE_COLOR;
+        })();
+
+
+        const overlay = document.createElement('div');
+        overlay.className = 'transform-overlay';
+        overlay.dataset.index = index;
+
+        overlay.style.color = currentTransformColor;
+
+        const roundedWidth = Math.round(rect.width);
+        const roundedHeight = Math.round(rect.height);
+        const roundedX = Math.round(rect.x);
+        const roundedY = Math.round(rect.y);
+
+        overlay.style.width = `${roundedWidth}px`;
+        overlay.style.height = `${roundedHeight}px`;
+
+        overlay.style.left = `${canvasLeftOffset + roundedX}px`;
+        overlay.style.top = `${canvasTopOffset + roundedY}px`;
+        overlay.style.transform = `rotate(${rect.rotation}rad)`;
+
+        if (index === activeRectIndex) {
+            overlay.classList.add('selected');
+            overlay.style.border = `2px solid ${currentTransformColor}`;
+
+            const handles = [
+                { class: 'corner tl', x: 0, y: 0 },
+                { class: 'corner tr', x: roundedWidth, y: 0 },
+                { class: 'corner bl', x: 0, y: roundedHeight },
+                { class: 'corner br', x: roundedWidth, y: roundedHeight }
+            ];
+
+            handles.forEach(h => {
+                const handle = document.createElement('div');
+                handle.className = `handle ${h.class}`;
+                handle.style.left = `${h.x}px`;
+                handle.style.top = `${h.y}px`;
+                handle.style.backgroundColor = currentTransformColor;
+                overlay.appendChild(handle);
+            });
+
+            const rotateHandle = document.createElement('div');
+            rotateHandle.className = 'handle rotate';
+            rotateHandle.innerHTML = '<span class="material-icons-round">rotate_right</span>';
+            rotateHandle.style.color = currentTransformColor;
+            overlay.appendChild(rotateHandle);
+        } else {
+            overlay.style.border = '';
+        }
+
+        canvasContainer.appendChild(overlay);
+    });
+}
+
+
+// --- 5. Initialisation and Event Handlers ---
+
+function initialize() {
+    setCanvasSize();
+    loadSettings();
+}
+
+// Mouse/Touch Interaction for Overlays
+canvasContainer.addEventListener('pointerdown', (e) => {
+    const target = e.target;
+    const overlay = target.closest('.transform-overlay');
+
+    const canvasRect = canvas.getBoundingClientRect();
+
+    if (overlay && showTransforms) { // CHECK NEW STATE
+        e.preventDefault();
+        const index = parseInt(overlay.dataset.index);
+        setActiveTransform(index);
+
+        activeRect = { ...transformationRects[index], index: index };
+
+        dragStartX = e.clientX - canvasRect.left;
+        dragStartY = e.clientY - canvasRect.top;
+        initialRectState = { ...activeRect };
+
+        if (target.classList.contains('handle') || target.closest('.handle')) {
+            if (target.classList.contains('rotate') || target.closest('.rotate')) { dragMode = 'rotate'; }
+            else if (target.classList.contains('br')) { dragMode = 'resize-br'; }
+            else if (target.classList.contains('tl')) { dragMode = 'resize-tl'; }
+            else if (target.classList.contains('tr')) { dragMode = 'resize-tr'; }
+            else if (target.classList.contains('bl')) { dragMode = 'resize-bl'; }
+        } else {
+            dragMode = 'move';
+        }
+    } else {
+        setActiveTransform(-1);
+    }
+});
+
+canvasContainer.addEventListener('pointermove', (e) => {
+    if (activeRectIndex === -1 || !dragMode) return;
+
+    e.preventDefault();
+    const canvasRect = canvas.getBoundingClientRect();
+
+    const currentX = e.clientX - canvasRect.left;
+    const currentY = e.clientY - canvasRect.top;
+
+    const dx = currentX - dragStartX;
+    const dy = currentY - dragStartY;
+
+    const rect = transformationRects[activeRectIndex];
+
+    switch (dragMode) {
+        case 'move':
+            rect.x = initialRectState.x + dx;
+            rect.y = initialRectState.y + dy;
+            break;
+        case 'resize-br':
+            rect.width = initialRectState.width + dx;
+            rect.height = initialRectState.height + dy;
+            break;
+        case 'resize-tl':
+            rect.x = initialRectState.x + dx;
+            rect.y = initialRectState.y + dy;
+            rect.width = initialRectState.width - dx;
+            rect.height = initialRectState.height - dy;
+            break;
+        case 'resize-tr':
+            rect.y = initialRectState.y + dy;
+            rect.width = initialRectState.width + dx;
+            rect.height = initialRectState.height - dy;
+            break;
+        case 'resize-bl':
+            rect.x = initialRectState.x + dx;
+            rect.width = initialRectState.width - dx;
+            rect.height = initialRectState.height + dy;
+            break;
+        case 'rotate':
+            const rectCenterX = initialRectState.x + initialRectState.width / 2;
+            const rectCenterY = initialRectState.y + initialRectState.height / 2;
+            const initialAngle = Math.atan2(dragStartY - rectCenterY, dragStartX - rectCenterX);
+            const currentAngle = Math.atan2(currentY - rectCenterY, currentX - rectCenterX);
+            rect.rotation = initialRectState.rotation + (currentAngle - initialAngle);
+            break;
+    }
+
+    rect.width = Math.max(10, rect.width);
+    rect.height = Math.max(10, rect.height);
+    rect.x = Math.max(-rect.width + 10, Math.min(rect.x, CANVAS_SIZE - 10));
+    rect.y = Math.max(-rect.height + 10, Math.min(rect.y, CANVAS_SIZE - 10));
+
+    // Clear canvas when dragging, regardless of auto-iterate state
+    if (intervalId) {
+        // If auto-iterate is running, clear the canvas to avoid trails
+        resetCanvas(false);
+    } else {
+        resetCanvas(true); // Clear and reset IFS state to force a complete re-run on drag
+        // Re-draw all points from scratch when dragging a transform
+        if (document.getElementById('iterateBtn').hasAttribute('data-ran-once')) {
+            runSingleIteration();
+        }
+    }
+
+    renderTransformationsUI();
+});
+
+canvasContainer.addEventListener('pointerup', () => {
+    if (dragMode) {
+        saveSettings();
+    }
+    dragMode = null;
+    renderTransformationsUI();
+});
+
+// Control Panel Event Listeners
+document.getElementById('addTransform').addEventListener('click', () => {
+    addTransformUI();
+});
+
+document.getElementById('iterateBtn').addEventListener('click', () => {
+    if (transformationRects.length === 0) {
+        alert("Please add or load a transformation set.");
+        return;
+    }
+    runSingleIteration();
+});
+
+document.getElementById('playPauseBtn').addEventListener('click', toggleAutoIterate);
+document.getElementById('canvasModeToggleBtn').addEventListener('click', toggleCanvasTheme);
+document.getElementById('bnwToggleBtn').addEventListener('click', toggleBNWTransforms);
+document.getElementById('toggleRectsBtn').addEventListener('click', toggleShowTransforms);
+
+// NEW: Info button listener
+document.getElementById('toggleInfoBtn').addEventListener('click', toggleInfo);
+
+// NEW: File operation listeners
+document.getElementById('saveIFSBtn').addEventListener('click', saveIFS);
+fileInput.addEventListener('change', handleFileSelect);
+document.getElementById('loadIFSBtn').addEventListener('click', () => {
+    fileInput.click(); // Trigger the hidden file input click
+});
+
+
+document.getElementById('randomBtn').addEventListener('click', () => {
+    stopAutoIterate();
+    transformationRects = [];
+    generateRandomIFS(Math.floor(Math.random() * 4) + 2);
+    renderTransformationsUI();
+    resetCanvas(true);
+    runSingleIteration();
+    saveSettings();
+});
+
+document.getElementById('resetBtn').addEventListener('click', () => {
+    stopAutoIterate();
+    resetCanvas(true); // Resets canvas and persistent state
+});
+
+resetSettingsBtn.addEventListener('click', resetAllSettings);
+
+window.addEventListener('resize', setCanvasSize);
+
+initialize();

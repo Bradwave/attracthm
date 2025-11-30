@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IFS Attractor Generator</title>
+    <link href="https://fonts.googleapis.com/css2?family=Geist+Mono&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+
+<body>
+
+    <div id="controls">
+        <h2>IFS Attractor</h2>
+
+
+
+        <fieldset>
+            <legend>Rendering</legend>
+            <div class="flex-row" style="margin-bottom: 10px;">
+                <label>Points: <input type="number" id="numIterations" value="20000" min="1000"
+                        onchange="saveSettings()"></label>
+                <label>Opacity: <input type="number" id="alphaValue" value="0.05" min="0.01" max="1.0" step="0.01"
+                        onchange="saveSettings()"></label>
+                <label>Burn-in: <input type="number" id="burnInPointsInput" value="20" min="0"
+                        onchange="saveSettings()"></label>
+            </div>
+
+            <div class="action-buttons three-col">
+                <button id="iterateBtn">
+                    <span class="material-icons-round">play_arrow</span>
+                    Step
+                </button>
+                <button id="resetBtn">
+                    <span class="material-icons-round">delete_sweep</span>
+                    Clear
+                </button>
+            </div>
+
+            <div class="action-buttons">
+                <button id="playPauseBtn">
+                    <span class="material-icons-round">play_circle</span>
+                    Auto
+                </button>
+            </div>
+        </fieldset>
+
+        <fieldset>
+            <legend>Display</legend>
+            <div class="action-buttons three-col">
+                <button id="canvasModeToggleBtn" style="background-color: #5b5b5b;">
+                    <span class="material-icons-round">dark_mode</span>
+                    Dark
+                </button>
+                <button id="bnwToggleBtn" style="background-color: #5b5b5b;">
+                    <span class="material-icons-round">palette</span>
+                    Color
+                </button>
+                <button id="toggleRectsBtn" style="background-color: #5b5b5b;">
+                    <span class="material-icons-round">visibility_off</span>
+                    Hide
+                </button>
+            </div>
+        </fieldset>
+
+        <fieldset>
+            <legend>Settings</legend>
+            <button id="randomBtn" style="width: 100%; background-color: #5b5b5b;">
+                <span class="material-icons-round">casino</span>
+                Randomize
+            </button>
+            <button id="resetSettingsBtn" style="background-color: #555; width: 100%;">
+                <span class="material-icons-round">settings_backup_restore</span>
+                Reset All
+            </button>
+        </fieldset>
+
+        <fieldset id="presets">
+            <legend>Presets</legend>
+            <select id="presetSelect">
+                <option value="none">-- Select --</option>
+                <option value="barnsley">Barnsley Fern</option>
+                <option value="sierpinski">Sierpinski Gasket</option>
+                <option value="dragon">Dragon Curve</option>
+                <option value="koch">Koch Variant</option>
+                <option value="cantor">Cantor Dust</option>
+                <option value="tree">Fractal Tree</option>
+                <option value="spiral">Spiral</option>
+                <option value="crystal">Crystal</option>
+            </select>
+            <button onclick="loadPreset()" style="background-color: #5b5b5b; width: 100%; margin-top: 5px;">
+                <span class="material-icons-round">folder_open</span>
+                Load
+            </button>
+        </fieldset>
+
+        <fieldset id="transformsFieldset">
+            <legend>Transformations</legend>
+            <div id="transformationsList">
+            </div>
+            <button id="addTransform">
+                <span class="material-icons-round">add</span>
+                Add Transform
+            </button>
+        </fieldset>
+
+        <fieldset>
+            <legend>File</legend>
+            <div class="action-buttons">
+                <button id="saveIFSBtn">
+                    <span class="material-icons-round">save_alt</span>
+                    Save
+                </button>
+                <button id="loadIFSBtn">
+                    <span class="material-icons-round">folder_open</span>
+                    Load
+                </button>
+            </div>
+            <input type="file" id="fileInput" accept=".json" style="display: none;">
+        </fieldset>
+
+        <fieldset>
+            <legend>Info</legend>
+            <button id="toggleInfoBtn" style="width: 100%; background-color: #5b5b5b;">
+                <span class="material-icons-round">info</span> How it Works
+            </button>
+            <div id="infoContent" style="display: none; margin-top: 10px; font-size: 0.85em; line-height: 1.4;">
+                <p style="font-weight: bold; margin-bottom: 5px;">IFS Attractor Generation</p>
+                <p style="margin-top: 0;">This app generates fractals using an <b>Iterated Function System (IFS)</b>
+                    with the <b>Random Iteration Algorithm</b>.</p>
+
+                <h3 style="margin-top: 10px; margin-bottom: 5px; color: var(--accent-red);">1. IFS Definition</h3>
+                <p style="margin-top: 0;">The fractal is defined by <b>affine transformations</b> (rectangular maps).
+                    Each combines <b>scaling</b>, <b>rotation</b>, and <b>translation</b>.</p>
+                <p style="margin-top: 0;">The <b>Probability (P)</b> of each map dictates its weight. All P values must
+                    sum to 1.</p>
+
+                <h3 style="margin-top: 10px; margin-bottom: 5px; color: var(--accent-red);">2. Iteration Process</h3>
+                <ol style="padding-left: 20px; margin-top: 0;">
+                    <li><b>Start:</b> Begin at origin (0,0)</li>
+                    <li><b>Burn-in:</b> Initial iterations without drawing to reach the attractor</li>
+                    <li><b>Drawing:</b> Randomly select transforms based on P values</li>
+                    <li><b>Plotting:</b> Apply transform and plot as 1x1 pixel</li>
+                    <li><b>Blending:</b> Opacity accumulates in frequently visited areas</li>
+                </ol>
+            </div>
+        </fieldset>
+    </div>
+
+    <div id="canvas-container">
+        <canvas id="outputCanvas"></canvas>
+    </div>
+
+    <script src="js/main.js"></script>
+
+</body>
+
+</html>
