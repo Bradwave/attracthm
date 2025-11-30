@@ -1,4 +1,72 @@
 // --- 1. Global Variables & Initialization ---
+
+// Helper function to generate random hex color
+function getRandomColor() {
+    const hue = Math.floor(Math.random() * 360);
+    const saturation = 70;
+    const lightness = 60;
+
+    // Convert HSL to RGB
+    const c = (1 - Math.abs(2 * lightness / 100 - 1)) * saturation / 100;
+    const x = c * (1 - Math.abs((hue / 60) % 2 - 1));
+    const m = lightness / 100 - c / 2;
+
+    let r, g, b;
+    if (hue < 60) { r = c; g = x; b = 0; }
+    else if (hue < 120) { r = x; g = c; b = 0; }
+    else if (hue < 180) { r = 0; g = c; b = x; }
+    else if (hue < 240) { r = 0; g = x; b = c; }
+    else if (hue < 300) { r = x; g = 0; b = c; }
+    else { r = c; g = 0; b = x; }
+
+    r = Math.round((r + m) * 255);
+    g = Math.round((g + m) * 255);
+    b = Math.round((b + m) * 255);
+
+    return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+}
+
+// Helper function to normalize color to hex format
+function normalizeColor(color) {
+    // If already hex, return as is
+    if (color.startsWith('#')) {
+        return color;
+    }
+
+    // If HSL format, convert to hex
+    if (color.startsWith('hsl')) {
+        // Parse HSL values
+        const match = color.match(/hsl\((\d+),\s*(\d+)%,\s*(\d+)%\)/);
+        if (match) {
+            const hue = parseInt(match[1]);
+            const saturation = parseInt(match[2]);
+            const lightness = parseInt(match[3]);
+
+            // Convert HSL to RGB
+            const c = (1 - Math.abs(2 * lightness / 100 - 1)) * saturation / 100;
+            const x = c * (1 - Math.abs((hue / 60) % 2 - 1));
+            const m = lightness / 100 - c / 2;
+
+            let r, g, b;
+            if (hue < 60) { r = c; g = x; b = 0; }
+            else if (hue < 120) { r = x; g = c; b = 0; }
+            else if (hue < 180) { r = 0; g = c; b = x; }
+            else if (hue < 240) { r = 0; g = x; b = c; }
+            else if (hue < 300) { r = x; g = 0; b = c; }
+            else { r = c; g = 0; b = x; }
+
+            r = Math.round((r + m) * 255);
+            g = Math.round((g + m) * 255);
+            b = Math.round((b + m) * 255);
+
+            return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+        }
+    }
+
+    // Default fallback
+    return '#ff6347';
+}
+
 let CANVAS_SIZE = 0;
 const canvas = document.getElementById('outputCanvas');
 const ctx = canvas.getContext('2d');
@@ -242,6 +310,13 @@ function loadSettings() {
     const savedSettings = localStorage.getItem(LOCAL_STORAGE_KEY);
     const initialScaleFactor = CANVAS_SIZE / 600;
 
+    // Clear old settings if they contain HSL colors (migration)
+    if (savedSettings && savedSettings.includes('hsl(')) {
+        localStorage.removeItem(LOCAL_STORAGE_KEY);
+        location.reload();
+        return;
+    }
+
     if (savedSettings) {
         const settings = JSON.parse(savedSettings);
 
@@ -293,8 +368,8 @@ function loadSettings() {
 
         // Update button texts for the new defaults
         canvasModeToggleBtn.innerHTML = '<span class="material-icons-round">dark_mode</span>Dark Canvas';
-        bnwToggleBtn.innerHTML = '<span class="material-icons-round">palette</span>Colored Transforms';
-        toggleRectsBtn.innerHTML = '<span class="material-icons-round">visibility_off</span>Hide Transforms';
+        bnwToggleBtn.innerHTML = '<span class="material-icons-round">palette</span>Colored IFS';
+        toggleRectsBtn.innerHTML = '<span class="material-icons-round">visibility_off</span>Hide IFS';
         // --- END NEW DEFAULTS ---
 
 
@@ -451,8 +526,8 @@ function toggleInfo() {
 
     infoContent.style.display = isVisible ? 'none' : 'block';
     btn.style.backgroundColor = isVisible ? '#5b5b5b' : ACCENT_RED;
-    btn.innerHTML = isVisible 
-        ? '<span class="material-icons-round">info</span> How it Works' 
+    btn.innerHTML = isVisible
+        ? '<span class="material-icons-round">info</span> How it Works'
         : '<span class="material-icons-round">expand_less</span> Hide Info';
 }
 
@@ -493,7 +568,7 @@ function handleFileSelect(event) {
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = function(e) {
+    reader.onload = function (e) {
         try {
             const loadedData = JSON.parse(e.target.result);
             if (!Array.isArray(loadedData) || loadedData.some(item => typeof item.x !== 'number')) {
@@ -507,7 +582,7 @@ function handleFileSelect(event) {
             // Scale the loaded coordinates from 600x600 reference back to current canvas size
             const scaleFactor = CANVAS_SIZE / 600;
             loadedData.forEach(rect => {
-                    // Simple validation and application
+                // Simple validation and application
                 transformationRects.push({
                     x: rect.x * scaleFactor,
                     y: rect.y * scaleFactor,
@@ -602,7 +677,7 @@ function removeTransformRect(index) {
 function addTransformUI(initialData = null) {
     const newRect = initialData || {
         x: CANVAS_SIZE * 0.25, y: CANVAS_SIZE * 0.25, width: CANVAS_SIZE * 0.5, height: CANVAS_SIZE * 0.5, rotation: 0, p: 1 / (transformationRects.length + 1 || 1),
-        color: `hsl(${Math.floor(Math.random() * 360)}, 70%, 60%)`
+        color: getRandomColor()
     };
     transformationRects.push(newRect);
 
@@ -648,7 +723,7 @@ function renderTransformationsUI() {
                     <label>P (Weight): <input type="number" step="0.01" value="${rect.p}" onchange="updateTransformRect(${index}, 'p', this.value)" style="width: 50px;"></label>
                 </div>
                 <div class="flex-row" style="margin-top: 8px;">
-                    <label>Color: <input type="color" value="${rect.color}" onchange="updateTransformRect(${index}, 'color', this.value)"></label>
+                    <label>Color: <input type="color" value="${normalizeColor(rect.color)}" onchange="updateTransformRect(${index}, 'color', this.value)"></label>
                 </div>
                 <div class="flex-row">
                     <label class="range-label">X: <input type="range" name="x" min="${-CANVAS_SIZE}" max="${maxRangeX}" value="${rect.x}" oninput="updateTransformRect(${index}, 'x', this.value)" style="width: 80px;"> <span>${Math.round(rect.x)}</span></label>
@@ -713,7 +788,7 @@ function generateRandomIFS(count) {
             height: Math.random() * (CANVAS_SIZE * 0.3) + (CANVAS_SIZE * 0.05),
             rotation: Math.random() * 2 * Math.PI,
             p: 1 / count,
-            color: `hsl(${Math.floor(Math.random() * 360)}, 70%, 60%)`
+            color: getRandomColor()
         };
         transformationRects.push(randomRect);
     }
@@ -744,7 +819,7 @@ function loadPreset() {
 
     renderTransformationsUI();
     resetCanvas(true);
-    runSingleIteration(); // Re-run the fractal
+    runSingleIteration();
     saveSettings();
 }
 
